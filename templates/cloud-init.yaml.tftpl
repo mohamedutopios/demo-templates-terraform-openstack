@@ -1,0 +1,46 @@
+#cloud-config
+# Template cloud-init rendu par templatefile() (voir locals.tf) :
+#  - dollar + accolades     : valeur fournie par Terraform (vm_name, owner, message, packages)
+#  - pourcent + accolades   : directive Terraform (boucle for/endfor) ; le "~" mange le saut de ligne
+#  - dollar doublé devant l'accolade : échappement, la VM reçoit le texte tel quel (pour le shell)
+# Pour voir le résultat du rendu : terraform output -raw cloud_init
+
+hostname: ${vm_name}
+
+# snapd ralentit énormément le premier boot sous émulation QEMU
+bootcmd:
+  - systemctl mask --now snapd.service snapd.seeded.service snapd.socket || true
+
+package_update: true
+packages:
+%{ for p in packages ~}
+  - ${p}
+%{ endfor ~}
+
+write_files:
+  - path: /var/www/html/index.html
+    permissions: "0644"
+    content: |
+      <!doctype html>
+      <html lang="fr">
+      <head><meta charset="utf-8"><title>${vm_name}</title></head>
+      <body style="font-family: sans-serif; max-width: 40rem; margin: 3rem auto;">
+        <h1>${message}</h1>
+        <p>Propriétaire : <strong>${owner}</strong></p>
+        <p>Machine : <code>${vm_name}</code> &mdash; IP privée : <code>__IP__</code></p>
+        <p>Paquets installés par cloud-init :</p>
+        <ul>
+%{ for p in packages ~}
+          <li>${p}</li>
+%{ endfor ~}
+        </ul>
+      </body>
+      </html>
+
+runcmd:
+  # L'IP privée n'est connue qu'au boot : c'est le shell de la VM qui la calcule
+  # ($${IP} est échappé pour que Terraform ne tente pas de l'interpoler).
+  - IP=$(hostname -I | cut -d' ' -f1); sed -i "s/__IP__/$${IP}/" /var/www/html/index.html
+  - systemctl enable --now nginx
+
+final_message: "cloud-init terminé pour ${vm_name} après $UPTIME secondes"
